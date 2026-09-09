@@ -11,7 +11,11 @@ data class ModelConfig(
     val temperature: Float = 0.7f,
     val maxTokens: Int? = null,
     val systemPrompt: String = "You are a helpful assistant.",
-    val isDefault: Boolean = false
+    val isDefault: Boolean = false,
+    /** 深度思考（DeepSeek thinking / 推理模式） */
+    val enableThinking: Boolean = false,
+    /** 联网搜索（部分中转/国产 API 的 enable_search） */
+    val enableWebSearch: Boolean = false
 ) {
     companion object {
         fun defaultConfigs(): List<ModelConfig> = listOf(
@@ -23,10 +27,11 @@ data class ModelConfig(
                 isDefault = true
             ),
             ModelConfig(
-                name = "DeepSeek",
-                baseUrl = "https://api.deepseek.com/v1",
+                name = "DeepSeek V4 Flash",
+                baseUrl = "https://api.deepseek.com",
                 apiKey = "",
-                model = "deepseek-chat"
+                model = "deepseek-v4-flash",
+                enableThinking = false
             ),
             ModelConfig(
                 name = "SiliconFlow",
