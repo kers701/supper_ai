@@ -20,7 +20,7 @@ class ChatRepository {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .addInterceptor(HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BASIC
@@ -28,17 +28,18 @@ class ChatRepository {
         .build()
 
     private val retrofit = Retrofit.Builder()
-        .baseUrl("https://api.openai.com/") // placeholder, we use full @Url
+        .baseUrl("https://api.openai.com/")
         .client(client)
         .addConverterFactory(GsonConverterFactory.create())
         .build()
 
     private val api = retrofit.create(OpenAIApi::class.java)
 
-    fun streamChat(
+    private fun buildRequest(
         config: ModelConfig,
-        history: List<ChatMessage>
-    ): Flow<String> = flow {
+        history: List<ChatMessage>,
+        stream: Boolean
+    ): ChatCompletionRequest {
         val messages = mutableListOf<ApiMessage>()
         if (config.systemPrompt.isNotBlank()) {
             messages.add(ApiMessage("system", config.systemPrompt))
@@ -51,15 +52,22 @@ class ChatRepository {
             }
             messages.add(ApiMessage(role, msg.content))
         }
-
-        val request = ChatCompletionRequest(
+        return ChatCompletionRequest(
             model = config.model,
             messages = messages,
             temperature = config.temperature,
             maxTokens = config.maxTokens,
-            stream = true
+            stream = stream,
+            thinking = if (config.enableThinking) ThinkingConfig(type = "enabled") else null,
+            enableSearch = if (config.enableWebSearch) true else null
         )
+    }
 
+    fun streamChat(
+        config: ModelConfig,
+        history: List<ChatMessage>
+    ): Flow<String> = flow {
+        val request = buildRequest(config, history, stream = true)
         val base = config.baseUrl.trimEnd('/')
         val url = "$base/chat/completions"
         val auth = "Bearer ${config.apiKey}"
@@ -74,7 +82,12 @@ class ChatRepository {
                 if (data == "[DONE]") break
                 try {
                     val chunk = gson.fromJson(data, ChatCompletionResponse::class.java)
-                    val content = chunk.choices?.firstOrNull()?.delta?.content
+                    val delta = chunk.choices?.firstOrNull()?.delta
+                    val content = delta?.content
+                    val reasoning = delta?.reasoningContent
+                    if (!reasoning.isNullOrEmpty()) {
+                        // 思考过程可选展示，暂不混入正文以免干扰
+                    }
                     if (!content.isNullOrEmpty()) {
                         emit(content)
                     }
@@ -94,27 +107,7 @@ class ChatRepository {
         config: ModelConfig,
         history: List<ChatMessage>
     ): String {
-        val messages = mutableListOf<ApiMessage>()
-        if (config.systemPrompt.isNotBlank()) {
-            messages.add(ApiMessage("system", config.systemPrompt))
-        }
-        history.forEach { msg ->
-            val role = when (msg.role) {
-                Role.USER -> "user"
-                Role.ASSISTANT -> "assistant"
-                Role.SYSTEM -> "system"
-            }
-            messages.add(ApiMessage(role, msg.content))
-        }
-
-        val request = ChatCompletionRequest(
-            model = config.model,
-            messages = messages,
-            temperature = config.temperature,
-            maxTokens = config.maxTokens,
-            stream = false
-        )
-
+        val request = buildRequest(config, history, stream = false)
         val base = config.baseUrl.trimEnd('/')
         val url = "$base/chat/completions"
         val auth = "Bearer ${config.apiKey}"
