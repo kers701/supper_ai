@@ -8,6 +8,8 @@ import com.aichat.app.data.ModelConfig
 import com.aichat.app.data.ModelConfigRepository
 import com.aichat.app.data.Role
 import com.aichat.app.network.ChatRepository
+import com.aichat.app.util.AppUpdateChecker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,6 +17,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
@@ -25,7 +29,12 @@ data class ChatUiState(
     val error: String? = null,
     val showModelSheet: Boolean = false,
     val showEditModel: Boolean = false,
-    val editingModel: ModelConfig? = null
+    val editingModel: ModelConfig? = null,
+    val updateInfo: AppUpdateChecker.ReleaseInfo? = null,
+    val updateChecking: Boolean = false,
+    val updateDownloading: Boolean = false,
+    val updateProgress: Float = 0f,
+    val updateMessage: String? = null
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -37,6 +46,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
     private var streamJob: Job? = null
+    private var downloadedApk: File? = null
 
     init {
         viewModelScope.launch {
@@ -54,6 +64,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        checkForUpdate(silent = true)
     }
 
     fun onInputChange(text: String) {
@@ -84,7 +95,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         streamJob = viewModelScope.launch {
             try {
-                val history = _uiState.value.messages.dropLast(1) // exclude the empty assistant msg
+                val history = _uiState.value.messages.dropLast(1)
                 var fullContent = ""
                 chatRepo.streamChat(model, history).collect { chunk ->
                     fullContent += chunk
@@ -177,5 +188,99 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearError() {
         _uiState.update { it.copy(error = null) }
+    }
+
+    fun checkForUpdate(silent: Boolean = false) {
+        viewModelScope.launch {
+            if (!silent) {
+                _uiState.update { it.copy(updateChecking = true, updateMessage = null) }
+            }
+            val result = withContext(Dispatchers.IO) { AppUpdateChecker.checkLatest() }
+            when (result) {
+                is AppUpdateChecker.CheckResult.UpdateAvailable -> {
+                    _uiState.update {
+                        it.copy(
+                            updateInfo = result.info,
+                            updateChecking = false,
+                            updateMessage = null
+                        )
+                    }
+                }
+                is AppUpdateChecker.CheckResult.UpToDate -> {
+                    _uiState.update {
+                        it.copy(
+                            updateChecking = false,
+                            updateMessage = if (silent) null else "已是最新版本 ${result.current}"
+                        )
+                    }
+                }
+                is AppUpdateChecker.CheckResult.Failed -> {
+                    _uiState.update {
+                        it.copy(
+                            updateChecking = false,
+                            updateMessage = if (silent) null else "检查更新失败：${result.message}"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun dismissUpdate() {
+        _uiState.update { it.copy(updateInfo = null, updateProgress = 0f, updateDownloading = false) }
+    }
+
+    fun downloadAndInstallUpdate() {
+        val info = _uiState.value.updateInfo ?: return
+        val ctx = getApplication<Application>()
+        viewModelScope.launch {
+            _uiState.update { it.copy(updateDownloading = true, updateProgress = 0f, updateMessage = null) }
+            val result = withContext(Dispatchers.IO) {
+                AppUpdateChecker.downloadApk(ctx, info) { p ->
+                    _uiState.update { it.copy(updateProgress = p) }
+                }
+            }
+            when (result) {
+                is AppUpdateChecker.DownloadResult.Ok -> {
+                    downloadedApk = result.file
+                    _uiState.update { it.copy(updateDownloading = false, updateProgress = 1f) }
+                    if (!AppUpdateChecker.canInstallPackages(ctx)) {
+                        AppUpdateChecker.openInstallPermissionSettings(ctx)
+                        _uiState.update {
+                            it.copy(updateMessage = "请允许安装未知应用后，再点「安装」")
+                        }
+                    } else {
+                        AppUpdateChecker.installApk(ctx, result.file)
+                    }
+                }
+                is AppUpdateChecker.DownloadResult.Failed -> {
+                    _uiState.update {
+                        it.copy(
+                            updateDownloading = false,
+                            updateMessage = "下载失败：${result.message}"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun installDownloadedApk() {
+        val file = downloadedApk ?: return
+        val ctx = getApplication<Application>()
+        if (!AppUpdateChecker.canInstallPackages(ctx)) {
+            AppUpdateChecker.openInstallPermissionSettings(ctx)
+            return
+        }
+        AppUpdateChecker.installApk(ctx, file)
+    }
+
+    fun openReleasePage() {
+        val url = _uiState.value.updateInfo?.htmlUrl ?: return
+        AppUpdateChecker.openReleasePage(getApplication(), url)
+    }
+
+    fun clearUpdateMessage() {
+        _uiState.update { it.copy(updateMessage = null) }
     }
 }
