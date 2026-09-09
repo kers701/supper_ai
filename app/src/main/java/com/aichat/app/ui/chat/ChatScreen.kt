@@ -164,7 +164,7 @@ private fun EmptyState(currentModel: ModelConfig?) {
             modifier = Modifier.size(64.dp),
             tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
         )
-        Spacer(Modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         Text(
             "开始对话吧",
             style = MaterialTheme.typography.titleLarge,
