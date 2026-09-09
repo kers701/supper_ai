@@ -1,0 +1,425 @@
+package com.aichat.app.ui.chat
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.aichat.app.data.ChatMessage
+import com.aichat.app.data.ModelConfig
+import com.aichat.app.data.Role
+import com.aichat.app.viewmodel.ChatUiState
+import com.aichat.app.viewmodel.ChatViewModel
+import kotlinx.coroutines.launch
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChatScreen(viewModel: ChatViewModel) {
+    val uiState by viewModel.uiState.collectAsState()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(uiState.messages.size, uiState.messages.lastOrNull()?.content) {
+        if (uiState.messages.isNotEmpty()) {
+            scope.launch {
+                listState.animateScrollToItem(uiState.messages.lastIndex)
+            }
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text("AI Chat", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = uiState.currentModel?.name ?: "未选择模型",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { viewModel.showModelSheet(true) }) {
+                        Icon(Icons.Default.Tune, contentDescription = "模型设置")
+                    }
+                    IconButton(onClick = { viewModel.clearChat() }) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = "清空对话")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            )
+        },
+        bottomBar = {
+            ChatInputBar(
+                text = uiState.inputText,
+                isGenerating = uiState.isGenerating,
+                onTextChange = viewModel::onInputChange,
+                onSend = viewModel::sendMessage,
+                onStop = viewModel::stopGenerating
+            )
+        }
+    ) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .background(MaterialTheme.colorScheme.background)
+        ) {
+            if (uiState.messages.isEmpty()) {
+                EmptyState(currentModel = uiState.currentModel)
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(uiState.messages, key = { it.id }) { msg ->
+                        MessageBubble(msg)
+                    }
+                }
+            }
+
+            uiState.error?.let { err ->
+                Snackbar(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(16.dp),
+                    action = {
+                        TextButton(onClick = { viewModel.clearError() }) {
+                            Text("关闭")
+                        }
+                    }
+                ) {
+                    Text(err)
+                }
+            }
+        }
+    }
+
+    if (uiState.showModelSheet) {
+        ModelSelectorSheet(
+            models = uiState.models,
+            currentId = uiState.currentModel?.id,
+            onSelect = viewModel::selectModel,
+            onEdit = { viewModel.showEditModel(it) },
+            onAdd = {
+                viewModel.showEditModel(
+                    ModelConfig(
+                        name = "",
+                        baseUrl = "https://api.openai.com/v1",
+                        apiKey = "",
+                        model = "gpt-4o"
+                    )
+                )
+            },
+            onDismiss = { viewModel.showModelSheet(false) }
+        )
+    }
+
+    if (uiState.showEditModel && uiState.editingModel != null) {
+        EditModelDialog(
+            config = uiState.editingModel!!,
+            onSave = viewModel::saveModel,
+            onDelete = {
+                viewModel.deleteModel(it)
+                viewModel.showEditModel(null)
+            },
+            onDismiss = { viewModel.showEditModel(null) }
+        )
+    }
+}
+
+@Composable
+private fun EmptyState(currentModel: ModelConfig?) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            Icons.Default.ChatBubbleOutline,
+            contentDescription = null,
+            modifier = Modifier.size(64.dp),
+            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+        )
+        Spacer(Modifier = Modifier.height(16.dp))
+        Text(
+            "开始对话吧",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            if (currentModel?.apiKey.isNullOrBlank())
+                "请先点击右上角配置 API Key"
+            else
+                "当前模型：${currentModel?.name}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
+        )
+    }
+}
+
+@Composable
+private fun MessageBubble(message: ChatMessage) {
+    val isUser = message.role == Role.USER
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+    ) {
+        Box(
+            modifier = Modifier
+                .widthIn(max = 320.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(
+                    if (isUser) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.surfaceVariant
+                )
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Column {
+                Text(
+                    text = message.content.ifEmpty { if (message.isStreaming) "思考中..." else "" },
+                    color = if (isUser) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurface,
+                    fontSize = 15.sp,
+                    lineHeight = 22.sp,
+                    fontFamily = if (message.content.contains("```")) FontFamily.Monospace else FontFamily.Default
+                )
+                if (message.isStreaming && message.content.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(2.dp),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatInputBar(
+    text: String,
+    isGenerating: Boolean,
+    onTextChange: (String) -> Unit,
+    onSend: () -> Unit,
+    onStop: () -> Unit
+) {
+    Surface(
+        tonalElevation = 3.dp,
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .navigationBarsPadding(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = onTextChange,
+                modifier = Modifier.weight(1f),
+                placeholder = { Text("输入消息...") },
+                maxLines = 5,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { if (!isGenerating) onSend() }),
+                shape = RoundedCornerShape(24.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            FilledIconButton(
+                onClick = { if (isGenerating) onStop() else onSend() },
+                enabled = isGenerating || text.isNotBlank()
+            ) {
+                Icon(
+                    if (isGenerating) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
+                    contentDescription = if (isGenerating) "停止" else "发送"
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModelSelectorSheet(
+    models: List<ModelConfig>,
+    currentId: String?,
+    onSelect: (ModelConfig) -> Unit,
+    onEdit: (ModelConfig) -> Unit,
+    onAdd: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(bottom = 32.dp)) {
+            Text(
+                "选择模型",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+            )
+            models.forEach { model ->
+                ListItem(
+                    headlineContent = { Text(model.name) },
+                    supportingContent = {
+                        Text(
+                            "${model.model} · ${model.baseUrl}",
+                            maxLines = 1,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    },
+                    leadingContent = {
+                        if (model.id == currentId) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        } else {
+                            Icon(Icons.Default.RadioButtonUnchecked, contentDescription = null)
+                        }
+                    },
+                    trailingContent = {
+                        IconButton(onClick = { onEdit(model) }) {
+                            Icon(Icons.Default.Edit, contentDescription = "编辑")
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface)
+                )
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            TextButton(
+                onClick = onAdd,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("添加新模型")
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditModelDialog(
+    config: ModelConfig,
+    onSave: (ModelConfig) -> Unit,
+    onDelete: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf(config.name) }
+    var baseUrl by remember { mutableStateOf(config.baseUrl) }
+    var apiKey by remember { mutableStateOf(config.apiKey) }
+    var model by remember { mutableStateOf(config.model) }
+    var systemPrompt by remember { mutableStateOf(config.systemPrompt) }
+    var temperature by remember { mutableStateOf(config.temperature.toString()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (config.name.isBlank()) "添加模型" else "编辑模型") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("显示名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it },
+                    label = { Text("Base URL") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("https://api.openai.com/v1") }
+                )
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    label = { Text("API Key") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = model,
+                    onValueChange = { model = it },
+                    label = { Text("Model 名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("gpt-4o") }
+                )
+                OutlinedTextField(
+                    value = temperature,
+                    onValueChange = { temperature = it },
+                    label = { Text("Temperature") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = systemPrompt,
+                    onValueChange = { systemPrompt = it },
+                    label = { Text("系统提示词") },
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onSave(
+                        config.copy(
+                            name = name.ifBlank { model },
+                            baseUrl = baseUrl.trimEnd('/'),
+                            apiKey = apiKey.trim(),
+                            model = model.trim(),
+                            temperature = temperature.toFloatOrNull() ?: 0.7f,
+                            systemPrompt = systemPrompt
+                        )
+                    )
+                },
+                enabled = baseUrl.isNotBlank() && model.isNotBlank()
+            ) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            Row {
+                if (config.name.isNotBlank()) {
+                    TextButton(onClick = { onDelete(config.id) }) {
+                        Text("删除", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("取消")
+                }
+            }
+        }
+    )
+}
