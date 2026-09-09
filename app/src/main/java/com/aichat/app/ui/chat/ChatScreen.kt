@@ -64,7 +64,7 @@ fun ChatScreen(viewModel: ChatViewModel) {
                 },
                 actions = {
                     IconButton(onClick = { viewModel.checkForUpdate(silent = false) }) {
-                        Icon(Icons.Default.SystemUpdate, contentDescription = "检查更新")
+                        Icon(Icons.Default.SystemUpdateAlt, contentDescription = "检查更新")
                     }
                     IconButton(onClick = { viewModel.showModelSheet(true) }) {
                         Icon(Icons.Default.Tune, contentDescription = "模型设置")
@@ -188,9 +188,11 @@ fun ChatScreen(viewModel: ChatViewModel) {
     }
 
     if (uiState.updateChecking) {
-        Box(Modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+            content = { CircularProgressIndicator() }
+        )
     }
 }
 
@@ -221,7 +223,7 @@ private fun UpdateDialog(
                 if (downloading) {
                     Spacer(modifier = Modifier.height(12.dp))
                     LinearProgressIndicator(
-                        progress = { progress },
+                        progress = progress.coerceIn(0f, 1f),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
@@ -346,7 +348,7 @@ private fun ChatInputBar(
                             onClick = {},
                             label = { Text("深度思考", style = MaterialTheme.typography.labelSmall) },
                             leadingIcon = {
-                                Icon(Icons.Default.Psychology, null, Modifier.size(16.dp))
+                                Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp))
                             }
                         )
                     }
@@ -355,7 +357,7 @@ private fun ChatInputBar(
                             onClick = {},
                             label = { Text("联网搜索", style = MaterialTheme.typography.labelSmall) },
                             leadingIcon = {
-                                Icon(Icons.Default.TravelExplore, null, Modifier.size(16.dp))
+                                Icon(Icons.Default.Public, null, Modifier.size(16.dp))
                             }
                         )
                     }
