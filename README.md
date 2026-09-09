@@ -23,19 +23,14 @@ cd AiChatApp
 ### 2. 用 Android Studio 打开
 
 - 打开 Android Studio → Open → 选择本项目根目录
-- 等待 Gradle 同步完成
+- 等待 Gradle 同步完成（首次会自动生成 Gradle Wrapper）
 - 连接真机或启动模拟器，点击 Run
 
 ### 3. 配置模型
 
 1. 打开 App 后点击右上角 **调谐图标**
 2. 选择已有模型点击编辑，或「添加新模型」
-3. 填写：
-   - **显示名称**：随便起名，如 `我的 GPT-4o`
-   - **Base URL**：例如 `https://api.openai.com/v1`
-   - **API Key**：你的密钥
-   - **Model 名称**：例如 `gpt-4o` / `deepseek-chat` / `qwen-plus` 等
-4. 保存后即可开始对话
+3. 填写 Base URL、API Key、Model 名称后保存即可开始对话
 
 ### 常见 Base URL 示例
 
@@ -49,11 +44,54 @@ cd AiChatApp
 
 ## GitHub Actions 自动打包
 
-已配置 `.github/workflows/build.yml`：
+工作流模式与 [wallpaper_app](https://github.com/kers701/wallpaper_app) 一致。
 
-- 推送到 `main` / `master` 或手动触发
-- 自动构建 **Debug APK** 和 **Release APK（未签名）**
-- 产物可在 Actions 页面 → 对应运行记录 → Artifacts 中下载
+### 普通构建（Debug）
+
+- 推送到 `main` / `master`、PR、或手动触发
+- 自动构建 **Debug APK**
+- 在 Actions → Artifacts 下载 `aichat-debug-apk`
+
+### 正式发布（Release）
+
+当提交说明包含以下任一关键字时，会触发 **Release 签名构建**：
+
+| 关键字 | 行为 |
+|--------|------|
+| **发布** | 构建正式版 + 自动创建 GitHub Release |
+| 正式 / release / re构建 / `[re]` / `re ` 等 | 仅构建正式版 APK（上传 Artifact，不建 Release） |
+| 推送 `v*` 标签 | 构建正式版 + 创建对应 Tag 的 GitHub Release |
+
+提交示例：
+
+```bash
+git commit -m "发布 1.0.0 首个正式版"
+# 或
+git commit -m "发布 v1.0.1 修复流式输出"
+git push
+```
+
+若提交信息里能匹配到 `vX.Y.Z` 或 `X.Y.Z`，会用作 Release Tag；否则使用 `v日期-短SHA`。
+
+### 配置 Release 签名 Secrets（必填）
+
+在仓库 **Settings → Secrets and variables → Actions** 中添加：
+
+| Secret 名称 | 说明 |
+|-------------|------|
+| `RELEASE_KEYSTORE_BASE64` | keystore 文件的 base64 编码（`base64 -w0 your.keystore`） |
+| `RELEASE_STORE_PASSWORD` | keystore 密码 |
+| `RELEASE_KEY_ALIAS` | 密钥别名 |
+| `RELEASE_KEY_PASSWORD` | 密钥密码 |
+
+本地也可放置 `keystore.properties`（已在 `.gitignore` 中）：
+
+```properties
+storeFile=/绝对路径/到/your.keystore
+storePassword=xxx
+keyAlias=xxx
+keyPassword=xxx
+```
 
 ## 技术栈
 
@@ -75,15 +113,6 @@ app/src/main/java/com/aichat/app/
 ├── viewmodel/      # ViewModel
 └── MainActivity.kt
 ```
-
-## 后续可扩展
-
-- [ ] 对话历史持久化（Room）
-- [ ] 多会话管理
-- [ ] Markdown / 代码高亮完整渲染
-- [ ] 图片上传（Vision 模型）
-- [ ] API Key 使用 Android Keystore 加密
-- [ ] 导出对话
 
 ## License
 

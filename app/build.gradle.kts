@@ -1,7 +1,22 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
+}
+
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
+fun propOrEnv(key: String, envKey: String): String? {
+    val fromFile = keystoreProperties.getProperty(key)?.takeIf { it.isNotBlank() }
+    if (fromFile != null) return fromFile
+    return System.getenv(envKey)?.takeIf { it.isNotBlank() }
 }
 
 android {
@@ -21,6 +36,21 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val storePath = propOrEnv("storeFile", "RELEASE_STORE_FILE")
+            val storePass = propOrEnv("storePassword", "RELEASE_STORE_PASSWORD")
+            val alias = propOrEnv("keyAlias", "RELEASE_KEY_ALIAS")
+            val keyPass = propOrEnv("keyPassword", "RELEASE_KEY_PASSWORD")
+            if (storePath != null && storePass != null && alias != null && keyPass != null) {
+                storeFile = file(storePath)
+                storePassword = storePass
+                keyAlias = alias
+                keyPassword = keyPass
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -28,6 +58,14 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            val hasReleaseSigning =
+                propOrEnv("storeFile", "RELEASE_STORE_FILE") != null &&
+                    propOrEnv("storePassword", "RELEASE_STORE_PASSWORD") != null &&
+                    propOrEnv("keyAlias", "RELEASE_KEY_ALIAS") != null &&
+                    propOrEnv("keyPassword", "RELEASE_KEY_PASSWORD") != null
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         debug {
             isMinifyEnabled = false
@@ -81,7 +119,7 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.google.code.gson:gson:2.11.0")
 
-    // DataStore for encrypted-ish prefs (simple SharedPreferences + encrypt later)
+    // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     // Coroutines
@@ -90,4 +128,3 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
-

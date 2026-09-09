@@ -28,3 +28,7 @@ local.properties
 *.orig
 *.swp
 *~
+
+keystore.properties
+*.keystore
+release.keystore
