@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aichat.app.BuildConfig
 import com.aichat.app.data.ChatMessage
+import com.aichat.app.data.Conversation
 import com.aichat.app.data.ModelConfig
 import com.aichat.app.data.Role
 import com.aichat.app.util.AppUpdateChecker
@@ -62,7 +63,15 @@ fun ChatScreen(viewModel: ChatViewModel) {
                         )
                     }
                 },
+                navigationIcon = {
+                    IconButton(onClick = { viewModel.showConversationSheet(true) }) {
+                        Icon(Icons.Default.Menu, contentDescription = "对话列表")
+                    }
+                },
                 actions = {
+                    IconButton(onClick = { viewModel.newConversation() }) {
+                        Icon(Icons.Default.AddComment, contentDescription = "新对话")
+                    }
                     IconButton(onClick = { viewModel.checkForUpdate(silent = false) }) {
                         Icon(Icons.Default.SystemUpdateAlt, contentDescription = "检查更新")
                     }
@@ -70,7 +79,7 @@ fun ChatScreen(viewModel: ChatViewModel) {
                         Icon(Icons.Default.Tune, contentDescription = "模型设置")
                     }
                     IconButton(onClick = { viewModel.clearChat() }) {
-                        Icon(Icons.Default.DeleteOutline, contentDescription = "清空对话")
+                        Icon(Icons.Default.DeleteOutline, contentDescription = "清空当前对话")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -86,7 +95,9 @@ fun ChatScreen(viewModel: ChatViewModel) {
                 enableWebSearch = uiState.currentModel?.enableWebSearch == true,
                 onTextChange = viewModel::onInputChange,
                 onSend = viewModel::sendMessage,
-                onStop = viewModel::stopGenerating
+                onStop = viewModel::stopGenerating,
+                onToggleThinking = viewModel::toggleThinking,
+                onToggleWebSearch = viewModel::toggleWebSearch
             )
         }
     ) { padding ->
@@ -143,6 +154,17 @@ fun ChatScreen(viewModel: ChatViewModel) {
         }
     }
 
+    if (uiState.showConversationSheet) {
+        ConversationSheet(
+            conversations = uiState.conversations,
+            currentId = uiState.currentConversationId,
+            onSelect = viewModel::selectConversation,
+            onDelete = viewModel::deleteConversation,
+            onNew = viewModel::newConversation,
+            onDismiss = { viewModel.showConversationSheet(false) }
+        )
+    }
+
     if (uiState.showModelSheet) {
         ModelSelectorSheet(
             models = uiState.models,
@@ -193,6 +215,86 @@ fun ChatScreen(viewModel: ChatViewModel) {
             contentAlignment = Alignment.Center,
             content = { CircularProgressIndicator() }
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConversationSheet(
+    conversations: List<Conversation>,
+    currentId: String?,
+    onSelect: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onNew: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(bottom = 32.dp)) {
+            Text(
+                "对话列表",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+            )
+            TextButton(
+                onClick = onNew,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("新建对话")
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            if (conversations.isEmpty()) {
+                Text(
+                    "暂无对话",
+                    modifier = Modifier.padding(24.dp),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            } else {
+                conversations.forEach { conv ->
+                    ListItem(
+                        headlineContent = {
+                            Text(conv.title.ifBlank { "新对话" }, maxLines = 1)
+                        },
+                        supportingContent = {
+                            Text(
+                                "${conv.messages.size} 条消息",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        },
+                        leadingContent = {
+                            if (conv.id == currentId) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            } else {
+                                Icon(Icons.Default.ChatBubbleOutline, null)
+                            }
+                        },
+                        trailingContent = {
+                            IconButton(onClick = { onDelete(conv.id) }) {
+                                Icon(
+                                    Icons.Default.DeleteOutline,
+                                    contentDescription = "删除",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(conv.id) }
+                            .padding(horizontal = 8.dp),
+                        colors = ListItemDefaults.colors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        )
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -319,6 +421,7 @@ private fun MessageBubble(message: ChatMessage) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatInputBar(
     text: String,
@@ -327,7 +430,9 @@ private fun ChatInputBar(
     enableWebSearch: Boolean,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    onToggleThinking: () -> Unit,
+    onToggleWebSearch: () -> Unit
 ) {
     Surface(
         tonalElevation = 3.dp,
@@ -338,30 +443,26 @@ private fun ChatInputBar(
                 .fillMaxWidth()
                 .navigationBarsPadding()
         ) {
-            if (enableThinking || enableWebSearch) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (enableThinking) {
-                        AssistChip(
-                            onClick = {},
-                            label = { Text("深度思考", style = MaterialTheme.typography.labelSmall) },
-                            leadingIcon = {
-                                Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp))
-                            }
-                        )
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = enableThinking,
+                    onClick = onToggleThinking,
+                    label = { Text("深度思考", style = MaterialTheme.typography.labelSmall) },
+                    leadingIcon = {
+                        Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp))
                     }
-                    if (enableWebSearch) {
-                        AssistChip(
-                            onClick = {},
-                            label = { Text("联网搜索", style = MaterialTheme.typography.labelSmall) },
-                            leadingIcon = {
-                                Icon(Icons.Default.Public, null, Modifier.size(16.dp))
-                            }
-                        )
+                )
+                FilterChip(
+                    selected = enableWebSearch,
+                    onClick = onToggleWebSearch,
+                    label = { Text("联网搜索", style = MaterialTheme.typography.labelSmall) },
+                    leadingIcon = {
+                        Icon(Icons.Default.Public, null, Modifier.size(16.dp))
                     }
-                }
+                )
             }
             Row(
                 modifier = Modifier
