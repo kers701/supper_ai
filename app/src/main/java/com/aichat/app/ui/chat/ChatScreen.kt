@@ -6,9 +6,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
@@ -21,10 +23,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aichat.app.BuildConfig
 import com.aichat.app.data.ChatMessage
 import com.aichat.app.data.ModelConfig
 import com.aichat.app.data.Role
-import com.aichat.app.viewmodel.ChatUiState
+import com.aichat.app.util.AppUpdateChecker
 import com.aichat.app.viewmodel.ChatViewModel
 import kotlinx.coroutines.launch
 
@@ -44,6 +47,9 @@ fun ChatScreen(viewModel: ChatViewModel) {
     }
 
     Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding(),
         topBar = {
             TopAppBar(
                 title = {
@@ -57,6 +63,9 @@ fun ChatScreen(viewModel: ChatViewModel) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { viewModel.checkForUpdate(silent = false) }) {
+                        Icon(Icons.Default.SystemUpdate, contentDescription = "检查更新")
+                    }
                     IconButton(onClick = { viewModel.showModelSheet(true) }) {
                         Icon(Icons.Default.Tune, contentDescription = "模型设置")
                     }
@@ -73,6 +82,8 @@ fun ChatScreen(viewModel: ChatViewModel) {
             ChatInputBar(
                 text = uiState.inputText,
                 isGenerating = uiState.isGenerating,
+                enableThinking = uiState.currentModel?.enableThinking == true,
+                enableWebSearch = uiState.currentModel?.enableWebSearch == true,
                 onTextChange = viewModel::onInputChange,
                 onSend = viewModel::sendMessage,
                 onStop = viewModel::stopGenerating
@@ -114,6 +125,21 @@ fun ChatScreen(viewModel: ChatViewModel) {
                     Text(err)
                 }
             }
+
+            uiState.updateMessage?.let { msg ->
+                Snackbar(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(16.dp),
+                    action = {
+                        TextButton(onClick = { viewModel.clearUpdateMessage() }) {
+                            Text("关闭")
+                        }
+                    }
+                ) {
+                    Text(msg)
+                }
+            }
         }
     }
 
@@ -148,6 +174,74 @@ fun ChatScreen(viewModel: ChatViewModel) {
             onDismiss = { viewModel.showEditModel(null) }
         )
     }
+
+    uiState.updateInfo?.let { info ->
+        UpdateDialog(
+            info = info,
+            downloading = uiState.updateDownloading,
+            progress = uiState.updateProgress,
+            onDismiss = viewModel::dismissUpdate,
+            onDownload = viewModel::downloadAndInstallUpdate,
+            onInstall = viewModel::installDownloadedApk,
+            onOpenPage = viewModel::openReleasePage
+        )
+    }
+
+    if (uiState.updateChecking) {
+        Box(Modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+    }
+}
+
+@Composable
+private fun UpdateDialog(
+    info: AppUpdateChecker.ReleaseInfo,
+    downloading: Boolean,
+    progress: Float,
+    onDismiss: () -> Unit,
+    onDownload: () -> Unit,
+    onInstall: () -> Unit,
+    onOpenPage: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("发现新版本 ${info.versionName}") },
+        text = {
+            Column {
+                Text("当前版本：${BuildConfig.VERSION_NAME}")
+                Spacer(modifier = Modifier.height(8.dp))
+                if (info.body.isNotBlank()) {
+                    Text(
+                        info.body.take(400),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+                if (downloading) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            when {
+                downloading -> TextButton(onClick = {}, enabled = false) { Text("下载中…") }
+                progress >= 1f -> TextButton(onClick = onInstall) { Text("安装") }
+                else -> TextButton(onClick = onDownload) { Text("下载更新") }
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onOpenPage) { Text("网页") }
+                TextButton(onClick = onDismiss) { Text("稍后") }
+            }
+        }
+    )
 }
 
 @Composable
@@ -227,6 +321,8 @@ private fun MessageBubble(message: ChatMessage) {
 private fun ChatInputBar(
     text: String,
     isGenerating: Boolean,
+    enableThinking: Boolean,
+    enableWebSearch: Boolean,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit
@@ -235,32 +331,62 @@ private fun ChatInputBar(
         tonalElevation = 3.dp,
         shadowElevation = 8.dp
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .navigationBarsPadding(),
-            verticalAlignment = Alignment.CenterVertically
+                .navigationBarsPadding()
         ) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = onTextChange,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("输入消息...") },
-                maxLines = 5,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { if (!isGenerating) onSend() }),
-                shape = RoundedCornerShape(24.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            FilledIconButton(
-                onClick = { if (isGenerating) onStop() else onSend() },
-                enabled = isGenerating || text.isNotBlank()
+            if (enableThinking || enableWebSearch) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (enableThinking) {
+                        AssistChip(
+                            onClick = {},
+                            label = { Text("深度思考", style = MaterialTheme.typography.labelSmall) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Psychology, null, Modifier.size(16.dp))
+                            }
+                        )
+                    }
+                    if (enableWebSearch) {
+                        AssistChip(
+                            onClick = {},
+                            label = { Text("联网搜索", style = MaterialTheme.typography.labelSmall) },
+                            leadingIcon = {
+                                Icon(Icons.Default.TravelExplore, null, Modifier.size(16.dp))
+                            }
+                        )
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    if (isGenerating) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
-                    contentDescription = if (isGenerating) "停止" else "发送"
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = onTextChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("输入消息...") },
+                    maxLines = 5,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { if (!isGenerating) onSend() }),
+                    shape = RoundedCornerShape(24.dp)
                 )
+                Spacer(modifier = Modifier.width(8.dp))
+                FilledIconButton(
+                    onClick = { if (isGenerating) onStop() else onSend() },
+                    enabled = isGenerating || text.isNotBlank()
+                ) {
+                    Icon(
+                        if (isGenerating) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
+                        contentDescription = if (isGenerating) "停止" else "发送"
+                    )
+                }
             }
         }
     }
@@ -287,17 +413,22 @@ private fun ModelSelectorSheet(
                 ListItem(
                     headlineContent = { Text(model.name) },
                     supportingContent = {
+                        val flags = buildList {
+                            if (model.enableThinking) add("思考")
+                            if (model.enableWebSearch) add("联网")
+                        }.joinToString(" · ")
                         Text(
-                            "${model.model} · ${model.baseUrl}",
+                            listOfNotNull(model.model, flags.takeIf { it.isNotEmpty() })
+                                .joinToString(" · "),
                             maxLines = 1,
                             style = MaterialTheme.typography.bodySmall
                         )
                     },
                     leadingContent = {
                         if (model.id == currentId) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary)
                         } else {
-                            Icon(Icons.Default.RadioButtonUnchecked, contentDescription = null)
+                            Icon(Icons.Default.RadioButtonUnchecked, null)
                         }
                     },
                     trailingContent = {
@@ -340,12 +471,17 @@ private fun EditModelDialog(
     var model by remember { mutableStateOf(config.model) }
     var systemPrompt by remember { mutableStateOf(config.systemPrompt) }
     var temperature by remember { mutableStateOf(config.temperature.toString()) }
+    var enableThinking by remember { mutableStateOf(config.enableThinking) }
+    var enableWebSearch by remember { mutableStateOf(config.enableWebSearch) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (config.name.isBlank()) "添加模型" else "编辑模型") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -359,7 +495,7 @@ private fun EditModelDialog(
                     label = { Text("Base URL") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("https://api.openai.com/v1") }
+                    placeholder = { Text("https://api.deepseek.com") }
                 )
                 OutlinedTextField(
                     value = apiKey,
@@ -374,7 +510,7 @@ private fun EditModelDialog(
                     label = { Text("Model 名称") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("gpt-4o") }
+                    placeholder = { Text("deepseek-v4-flash") }
                 )
                 OutlinedTextField(
                     value = temperature,
@@ -390,6 +526,30 @@ private fun EditModelDialog(
                     maxLines = 3,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("深度思考", modifier = Modifier.weight(1f))
+                    Switch(checked = enableThinking, onCheckedChange = { enableThinking = it })
+                }
+                Text(
+                    "适用于 DeepSeek 等支持 thinking 的接口",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("联网搜索", modifier = Modifier.weight(1f))
+                    Switch(checked = enableWebSearch, onCheckedChange = { enableWebSearch = it })
+                }
+                Text(
+                    "适用于通义等支持 enable_search 的接口",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
             }
         },
         confirmButton = {
@@ -402,7 +562,9 @@ private fun EditModelDialog(
                             apiKey = apiKey.trim(),
                             model = model.trim(),
                             temperature = temperature.toFloatOrNull() ?: 0.7f,
-                            systemPrompt = systemPrompt
+                            systemPrompt = systemPrompt,
+                            enableThinking = enableThinking,
+                            enableWebSearch = enableWebSearch
                         )
                     )
                 },
